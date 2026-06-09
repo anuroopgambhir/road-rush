@@ -3,9 +3,6 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>ROAD RUSH — 8-bit Racer</title>
 <style>
   html, body {
@@ -25,7 +22,7 @@
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     background: #000;
-    display: block;
+    box-shadow: 0 0 0 4px #1a1a2e, 0 0 40px rgba(0,0,0,.8);
   }
   /* subtle scanlines for CRT flavor */
   #scan {
@@ -43,11 +40,11 @@
 "use strict";
 
 /* ================= CONSTANTS ================= */
-var W = 160, H = 240;                   // H adapts to the screen shape in fit()
+var W = 160, H = 240;
 var HUD_H = 22;
 var ROAD_L = 24, ROAD_R = 136;
 var LANES = [38, 66, 94, 122];          // lane center x
-var PLAYER_Y = H - 48;                  // recomputed whenever H changes
+var PLAYER_Y = 192;
 
 var cvs = document.getElementById("game");
 var ctx = cvs.getContext("2d");
@@ -388,12 +385,10 @@ function tDown(e) {
   var pressed = false;
   var list = e.changedTouches || [e];
   var rect = cvs.getBoundingClientRect();
-  var sx = W / cvs.width;
-  var sy = H / cvs.height;
   for (var i = 0; i < list.length; i++) {
     var t = list[i];
-    var x = (t.clientX - rect.left) * sx;
-    var y = (t.clientY - rect.top)  * sy;
+    var x = (t.clientX - rect.left) / rect.width * W;
+    var y = (t.clientY - rect.top) / rect.height * H;
     if (x > 138 && y < HUD_H) { setMuted(!muted); continue; }   // mute icon
     touches[t.identifier === undefined ? "m" : t.identifier] = x < W / 2 ? -1 : 1;
     pressed = true;
@@ -548,11 +543,8 @@ function crash() {
 
 /* ================= DRAW ================= */
 function draw() {
-  var sx = cvs.width  / W;
-  var sy = cvs.height / H;
   var shake = shakeT > 0 ? Math.floor(Math.random() * 4) - 2 : 0;
   ctx.save();
-  ctx.scale(sx, sy);
   ctx.translate(shake, 0);
 
   // grass
@@ -634,30 +626,28 @@ function draw() {
 
   // overlays
   if (state === STATE_TITLE) {
-    var oy = Math.floor((H - 240) / 2);   // center the layout on taller screens
     ctx.fillStyle = "rgba(0,0,20,0.55)";
     ctx.fillRect(0, HUD_H, W, H - HUD_H);
-    drawTextC("ROAD", 48 + oy, "#f8b800", 4);
-    drawTextC("RUSH", 76 + oy, "#d82800", 4);
-    ctx.drawImage(sprPlayer, Math.floor(W / 2) - 6, 108 + oy);
-    drawTextC("DODGE TRAFFIC", 136 + oy, "#fcfcfc");
-    drawTextC("GRAB FUEL CANS", 145 + oy, "#fcfcfc");
-    drawTextC("HOLD LEFT - RIGHT SIDE", 158 + oy, "#bcbcbc");
-    drawTextC("OR ARROW KEYS", 167 + oy, "#bcbcbc");
-    drawTextC("M OR ICON : MUTE", 176 + oy, "#7c7c7c");
-    if (blinkT % 0.9 < 0.55) drawTextC("TAP TO START", 192 + oy, "#00e800", 2);
-    if (hiScore > 0) drawTextC("BEST: " + hiScore, 216 + oy, "#f8b800");
-    drawTextC("MADE BY ANUROOP GAMBHIR", 226 + oy, "#a8d8f8");
-    drawTextC("BUILT WITH CLAUDE AI", 233 + oy, "#7c7c7c");
+    drawTextC("ROAD", 48, "#f8b800", 4);
+    drawTextC("RUSH", 76, "#d82800", 4);
+    ctx.drawImage(sprPlayer, Math.floor(W / 2) - 6, 108);
+    drawTextC("DODGE TRAFFIC", 136, "#fcfcfc");
+    drawTextC("GRAB FUEL CANS", 145, "#fcfcfc");
+    drawTextC("HOLD LEFT - RIGHT SIDE", 158, "#bcbcbc");
+    drawTextC("OR ARROW KEYS", 167, "#bcbcbc");
+    drawTextC("M OR ICON : MUTE", 176, "#7c7c7c");
+    if (blinkT % 0.9 < 0.55) drawTextC("TAP TO START", 192, "#00e800", 2);
+    if (hiScore > 0) drawTextC("BEST: " + hiScore, 216, "#f8b800");
+    drawTextC("MADE BY ANUROOP GAMBHIR", 226, "#a8d8f8");
+    drawTextC("BUILT WITH CLAUDE AI", 233, "#7c7c7c");
   }
   else if (state === STATE_OVER) {
-    var oy2 = Math.floor((H - 240) / 2);
     ctx.fillStyle = "rgba(0,0,0,0.6)";
     ctx.fillRect(0, HUD_H, W, H - HUD_H);
-    drawTextC(fuel <= 0 ? "OUT OF FUEL" : "GAME OVER", 80 + oy2, "#d82800", 2);
-    drawTextC("SCORE: " + Math.floor(dist), 110 + oy2, "#fcfcfc");
-    if (newHi && blinkT % 0.6 < 0.35) drawTextC("NEW RECORD!", 124 + oy2, "#f8b800");
-    if (crashT <= 0 && blinkT % 0.9 < 0.55) drawTextC("TAP TO RETRY", 156 + oy2, "#00e800");
+    drawTextC(fuel <= 0 ? "OUT OF FUEL" : "GAME OVER", 80, "#d82800", 2);
+    drawTextC("SCORE: " + Math.floor(dist), 110, "#fcfcfc");
+    if (newHi && blinkT % 0.6 < 0.35) drawTextC("NEW RECORD!", 124, "#f8b800");
+    if (crashT <= 0 && blinkT % 0.9 < 0.55) drawTextC("TAP TO RETRY", 156, "#00e800");
   }
 }
 function pad(n, len) {
@@ -678,48 +668,15 @@ function loop(t) {
 }
 requestAnimationFrame(loop);
 
-/* ================= RESIZE / FULLSCREEN ================= */
+/* ================= RESIZE ================= */
 function fit() {
-  // Keep the retro 160px-wide world, but adapt the internal HEIGHT to the
-  // screen's shape: tall phones simply see more road. No bars, no stretch.
-  var raw = Math.round(W * innerHeight / Math.max(1, innerWidth));
-  H = Math.max(216, Math.min(360, raw));
-  if (cvs.height !== H) {
-    cvs.height = H;                      // changing size resets the context
-    ctx.imageSmoothingEnabled = false;
-  }
-  PLAYER_Y = H - 48;
-  if (raw === H) {
-    // aspect matches exactly: fill the whole screen
-    cvs.style.width  = innerWidth  + "px";
-    cvs.style.height = innerHeight + "px";
-  } else {
-    // extremely wide or tall windows: scale to fit, minimal bars
-    var s = Math.min(innerWidth / W, innerHeight / H);
-    cvs.style.width  = (W * s) + "px";
-    cvs.style.height = (H * s) + "px";
-  }
+  var s = Math.min(innerWidth / W, innerHeight / H);
+  if (s > 2) s = Math.floor(s);        // integer scaling when room allows
+  cvs.style.width = (W * s) + "px";
+  cvs.style.height = (H * s) + "px";
 }
 addEventListener("resize", fit);
 fit();
-reset();   // re-scatter roadside decor for the final screen height
-
-// Fullscreen button
-var fsBtn = document.createElement("button");
-fsBtn.textContent = "⛶";
-fsBtn.title = "Fullscreen";
-fsBtn.style.cssText = "position:fixed;bottom:10px;right:10px;z-index:99;background:rgba(0,0,0,.55);color:#fcfcfc;border:1px solid #555;border-radius:6px;font-size:20px;width:36px;height:36px;cursor:pointer;line-height:1;padding:0;touch-action:manipulation;";
-fsBtn.addEventListener("click", function () {
-  var el = document.documentElement;
-  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-    (el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || function(){}).call(el);
-  } else {
-    (document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || function(){}).call(document);
-  }
-});
-document.body.appendChild(fsBtn);
-addEventListener("fullscreenchange", fit);
-addEventListener("webkitfullscreenchange", fit);
 
 })();
 </script>
