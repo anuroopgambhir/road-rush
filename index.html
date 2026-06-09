@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>ROAD RUSH — 8-bit Racer</title>
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    background: #0d0d1a;
+    height: 100%;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #wrap {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #000;
+    box-shadow: 0 0 0 4px #1a1a2e, 0 0 40px rgba(0,0,0,.8);
+  }
+  /* subtle scanlines for CRT flavor */
+  #scan {
+    position: fixed; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(to bottom, rgba(0,0,0,.10) 0px, rgba(0,0,0,.10) 1px, transparent 2px, transparent 4px);
+    mix-blend-mode: multiply;
+  }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="160" height="240"></canvas></div>
+<div id="scan"></div>
+<script>
+(function () {
+"use strict";
+
+/* ================= CONSTANTS ================= */
+var W = 160, H = 240;
+var HUD_H = 22;
+var ROAD_L = 24, ROAD_R = 136;
+var LANES = [38, 66, 94, 122];          // lane center x
+var PLAYER_Y = 192;
+
+var cvs = document.getElementById("game");
+var ctx = cvs.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+
+/* NES-flavored palette */
+var PAL = {
+  ".": null,
+  "B": "#0e0e0e",  // tire / black
+  "R": "#d82800",  // red
+  "r": "#8f1500",  // dark red
+  "W": "#fcfcfc",  // white
+  "w": "#a8d8f8",  // windshield blue
+  "Y": "#f8b800",  // yellow
+  "O": "#e45c10",  // orange
+  "U": "#0058f8",  // blue
+  "u": "#00308f",  // dark blue
+  "G": "#00a800",  // green
+  "g": "#005800",  // dark green
+  "P": "#bcbcbc",  // light gray
+  "p": "#7c7c7c",  // gray
+  "K": "#503000"   // brown
+};
+
+/* ============== PIXEL SPRITES ============== */
+function makeSprite(rows) {
+  var c = document.createElement("canvas");
+  c.width = rows[0].length; c.height = rows.length;
+  var g = c.getContext("2d");
+  for (var y = 0; y < rows.length; y++)
+    for (var x = 0; x < rows[y].length; x++) {
+      var col = PAL[rows[y][x]];
+      if (col) { g.fillStyle = col; g.fillRect(x, y, 1, 1); }
+    }
+  return c;
+}
+function recolor(rows, from, to) {
+  return rows.map(function (r) {
+    return r.split("").map(function (ch) {
+      return ch === from[0] ? to[0] : (ch === from[1] ? to[1] : ch);
+    }).join("");
+  });
+}
+
+var CAR = [             // 12 x 18, facing up. R body / r shade
+"..R......R..",
+"..RRRRRRRR..",
+".BBRwwwwRBB.",
+".BBRwwwwRBB.",
+"..RRRRRRRR..",
+"..RrRRRRrR..",
+"..RRRRRRRR..",
+"..RRRRRRRR..",
+"..RRrrrrRR..",
+"..RRrrrrRR..",
+"..RRRRRRRR..",
+".BBRRRRRRBB.",
+".BBRrrrrRBB.",
+"..RRRRRRRR..",
+"..RrrrrrrR..",
+"..RRRRRRRR..",
+"..YR....RY..",
+"..RRRRRRRR.."
+];
+var TRUCK = [           // 12 x 26 lorry
+"..P......P..",
+"..PPPPPPPP..",
+".BBPppppPBB.",
+".BBPppppPBB.",
+"..PPPPPPPP..",
+"..PPPPPPPP..",
+"..pppppppp..",
+"..UPPPPPPU..",
+"..UPPPPPPU..",
+"..UPPPPPPU..",
+"..UPPPPPPU..",
+"..UPPPPPPU..",
+"..UPPPPPPU..",
+"..UPPPPPPU..",
+".BBPPPPPPBB.",
+".BBPPPPPPBB.",
+"..UPPPPPPU..",
+"..UPPPPPPU..",
+"..UPPPPPPU..",
+"..UPPPPPPU..",
+"..UPPPPPPU..",
+".BBPPPPPPBB.",
+".BBPPPPPPBB.",
+"..pppppppp..",
+"..PRPPPPRP..",
+"..PPPPPPPP.."
+];
+var FUEL = [            // 10 x 12 fuel can
+"...PPPP...",
+"..PYYYYP..",
+".YYYYYYYY.",
+".YYRRRRYY.",
+".YRWWWWRY.",
+".YRWRRWRY.",
+".YRWRRWRY.",
+".YRWWWWRY.",
+".YYRRRRYY.",
+".YYYYYYYY.",
+".YYYYYYYY.",
+".pppppppp."
+];
+var BUSH = [
+"..GG..",
+".GGGG.",
+"GGgGGG",
+"GGGgGG",
+".gGGg.",
+"..KK.."
+];
+var BOOM = [
+[ // frame 0
+"....YY....",
+"...YOOY...",
+"..YOWWOY..",
+"..YOWWOY..",
+"...YOOY...",
+"....YY...."
+],
+[ // frame 1
+".Y..OO..Y.",
+"..YOWWOY..",
+".OWWYYWWO.",
+".OWWYYWWO.",
+"..YOWWOY..",
+".Y..OO..Y."
+],
+[ // frame 2
+"O...YY...O",
+".Y.OWWO.Y.",
+"Y.WY..YW.Y",
+"Y.WY..YW.Y",
+".Y.OWWO.Y.",
+"O...YY...O"
+]
+];
+
+var sprPlayer = makeSprite(CAR);
+var sprEnemies = [
+  makeSprite(recolor(CAR, "Rr", "Uu")),
+  makeSprite(recolor(CAR, "Rr", "Yg")),
+  makeSprite(recolor(CAR, "Rr", "Gg")),
+  makeSprite(recolor(CAR, "Rr", "Pp"))
+];
+var sprTruck = makeSprite(TRUCK);
+var sprFuel = makeSprite(FUEL);
+var sprBush = makeSprite(BUSH);
+var sprBoom = BOOM.map(makeSprite);
+
+/* ============== 3x5 PIXEL FONT ============== */
+var FONT = {
+"0":["111","101","101","101","111"],"1":["010","110","010","010","111"],
+"2":["111","001","111","100","111"],"3":["111","001","111","001","111"],
+"4":["101","101","111","001","001"],"5":["111","100","111","001","111"],
+"6":["111","100","111","101","111"],"7":["111","001","001","010","010"],
+"8":["111","101","111","101","111"],"9":["111","101","111","001","111"],
+"A":["010","101","111","101","101"],"B":["110","101","110","101","110"],
+"C":["011","100","100","100","011"],"D":["110","101","101","101","110"],
+"E":["111","100","110","100","111"],"F":["111","100","110","100","100"],
+"G":["011","100","101","101","011"],"H":["101","101","111","101","101"],
+"I":["111","010","010","010","111"],"J":["001","001","001","101","010"],
+"K":["101","110","100","110","101"],"L":["100","100","100","100","111"],
+"M":["101","111","101","101","101"],"N":["110","101","101","101","101"],
+"O":["111","101","101","101","111"],"P":["111","101","111","100","100"],
+"Q":["111","101","101","111","001"],"R":["111","101","110","101","101"],
+"S":["011","100","010","001","110"],"T":["111","010","010","010","010"],
+"U":["101","101","101","101","111"],"V":["101","101","101","101","010"],
+"W":["101","101","101","111","101"],"X":["101","101","010","101","101"],
+"Y":["101","101","010","010","010"],"Z":["111","001","010","100","111"],
+"-":["000","000","111","000","000"],".":["000","000","000","000","010"],
+"!":["010","010","010","000","010"],":":["000","010","000","010","000"],
+" ":["000","000","000","000","000"]
+};
+function drawText(s, x, y, color, scale) {
+  scale = scale || 1;
+  ctx.fillStyle = color;
+  for (var i = 0; i < s.length; i++) {
+    var g = FONT[s[i].toUpperCase()];
+    if (g) for (var r = 0; r < 5; r++)
+      for (var c = 0; c < 3; c++)
+        if (g[r][c] === "1")
+          ctx.fillRect(x + i * 4 * scale + c * scale, y + r * scale, scale, scale);
+  }
+}
+function textW(s, scale) { return s.length * 4 * (scale || 1) - (scale || 1); }
+function drawTextC(s, y, color, scale) { drawText(s, Math.floor((W - textW(s, scale)) / 2), y, color, scale); }
+
+/* ================= AUDIO ================= */
+var AC = null, master = null, muted = false;
+function audio() {
+  if (!AC) {
+    try {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      master = AC.createGain();
+      master.gain.value = muted ? 0 : 1;
+      master.connect(AC.destination);
+    } catch (e) {}
+  }
+  if (AC && AC.state === "suspended") AC.resume();
+  if (AC && !musicTimer) startMusic();
+}
+function setMuted(m) {
+  muted = m;
+  if (master) master.gain.setTargetAtTime(muted ? 0 : 1, AC.currentTime, 0.02);
+}
+function beep(freq, dur, type, vol, slide, when) {
+  if (!AC) return;
+  var t = when || AC.currentTime;
+  var o = AC.createOscillator(), g = AC.createGain();
+  o.type = type || "square";
+  o.frequency.setValueAtTime(freq, t);
+  if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + dur);
+  g.gain.setValueAtTime(vol || 0.08, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g); g.connect(master);
+  o.start(t); o.stop(t + dur);
+}
+function noiseBurst(dur, vol, when) {
+  if (!AC) return;
+  var t = when || AC.currentTime;
+  var len = Math.max(1, Math.floor(AC.sampleRate * dur));
+  var buf = AC.createBuffer(1, len, AC.sampleRate);
+  var d = buf.getChannelData(0);
+  for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  var src = AC.createBufferSource(); src.buffer = buf;
+  var g = AC.createGain();
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  src.connect(g); g.connect(master);
+  src.start(t);
+}
+function sndPickup() { beep(660, 0.08, "square", 0.07); setTimeout(function(){beep(990,0.12,"square",0.07);},70); }
+function sndCrash()  { beep(180, 0.5, "sawtooth", 0.12, 40); beep(90, 0.6, "square", 0.10, 30); noiseBurst(0.4, 0.18); }
+function sndStart()  { beep(440,0.1,"square",0.06); setTimeout(function(){beep(550,0.1,"square",0.06);},110); setTimeout(function(){beep(880,0.18,"square",0.07);},220); }
+
+/* ---- engine hum: pitch & filter follow speed ---- */
+var eng = null;
+function engineStart() {
+  if (!AC || eng) return;
+  var o1 = AC.createOscillator(), o2 = AC.createOscillator();
+  o1.type = "sawtooth"; o2.type = "square";
+  var f = AC.createBiquadFilter();
+  f.type = "lowpass"; f.frequency.value = 500; f.Q.value = 2;
+  var g = AC.createGain(); g.gain.value = 0;
+  o1.connect(f); o2.connect(f); f.connect(g); g.connect(master);
+  o1.start(); o2.start();
+  eng = { o1: o1, o2: o2, g: g, f: f };
+  g.gain.setTargetAtTime(0.04, AC.currentTime, 0.25);
+}
+function engineUpdate(spd) {
+  if (!eng) return;
+  var base = 38 + spd * 0.42 + Math.sin(performance.now() / 90) * 2;
+  eng.o1.frequency.setTargetAtTime(base, AC.currentTime, 0.05);
+  eng.o2.frequency.setTargetAtTime(base * 0.5 + 1, AC.currentTime, 0.05);
+  eng.f.frequency.setTargetAtTime(280 + spd * 2.2, AC.currentTime, 0.1);
+}
+function engineStop() {
+  if (!eng) return;
+  var e = eng; eng = null;
+  e.g.gain.setTargetAtTime(0, AC.currentTime, 0.08);
+  setTimeout(function () { try { e.o1.stop(); e.o2.stop(); } catch (err) {} }, 600);
+}
+
+/* ---- background chiptune loop (A minor, 4 bars) ---- */
+var musicTimer = null, seqPos = 0, nextNote = 0;
+var BPM = 168, MSTEP = 60 / BPM / 4;
+function nf(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+var R = 0;
+var LEAD = [
+  69,R,72,R, 76,R,72,R, 69,R,72,R, 76,79,76,R,
+  65,R,69,R, 72,R,69,R, 67,R,71,R, 74,R,71,67,
+  69,R,72,R, 76,R,72,R, 81,R,79,R, 76,79,76,R,
+  72,R,74,R, 76,R,74,R, 72,R,71,R, 69,R,R,R
+];
+var BASS = [
+  45,R,45,R, 45,R,45,R, 45,R,45,R, 45,R,45,R,
+  41,R,41,R, 41,R,41,R, 43,R,43,R, 43,R,43,R,
+  45,R,45,R, 45,R,45,R, 41,R,41,R, 41,R,41,R,
+  48,R,48,R, 43,R,43,R, 45,R,45,R, 45,R,45,R
+];
+function scheduleStep(i, t) {
+  if (LEAD[i]) beep(nf(LEAD[i]), MSTEP * 1.8, "square", 0.04, 0, t);
+  if (BASS[i]) beep(nf(BASS[i] - 12), MSTEP * 1.6, "triangle", 0.10, 0, t);
+  if (i % 4 === 2) noiseBurst(0.03, 0.05, t);        // hi-hat accents
+  else if (i % 2 === 0) noiseBurst(0.018, 0.025, t);
+}
+function startMusic() {
+  if (!AC || musicTimer) return;
+  seqPos = 0; nextNote = AC.currentTime + 0.1;
+  musicTimer = setInterval(function () {
+    while (nextNote < AC.currentTime + 0.15) {
+      scheduleStep(seqPos, nextNote);
+      seqPos = (seqPos + 1) % LEAD.length;
+      nextNote += MSTEP;
+    }
+  }, 30);
+}
+
+/* ================= GAME STATE ================= */
+var STATE_TITLE = 0, STATE_PLAY = 1, STATE_CRASH = 2, STATE_OVER = 3;
+var state = STATE_TITLE;
+
+var hiScore = 0;            // session high score (in-memory)
+var player, enemies, fuels, bushes;
+var dist, speed, fuel, spawnT, fuelT, bushT, crashT, blinkT, shakeT, newHi, roadScroll;
+var steer = 0;              // -1 left, 0 none, 1 right
+
+function reset() {
+  player = { x: LANES[1] - 6, w: 12, h: 18 };
+  enemies = []; fuels = []; bushes = [];
+  dist = 0; speed = 0; fuel = 100; roadScroll = 0;
+  spawnT = 1.2; fuelT = 6; bushT = 0;
+  crashT = 0; blinkT = 0; shakeT = 0; newHi = false;
+  // pre-scatter bushes
+  for (var y = HUD_H; y < H; y += 28) {
+    bushes.push({ x: 4 + ((y * 7) % 12), y: y });
+    bushes.push({ x: 142 + ((y * 5) % 12), y: y });
+  }
+}
+
+/* ================= INPUT ================= */
+var keys = {};
+addEventListener("keydown", function (e) {
+  keys[e.key] = true;
+  if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"," "].indexOf(e.key) >= 0) e.preventDefault();
+  if (e.key === "m" || e.key === "M") { audio(); setMuted(!muted); return; }
+  press();
+});
+addEventListener("keyup", function (e) { keys[e.key] = false; });
+
+var touches = {};
+function tDown(e) {
+  e.preventDefault(); audio();
+  var pressed = false;
+  var list = e.changedTouches || [e];
+  var rect = cvs.getBoundingClientRect();
+  for (var i = 0; i < list.length; i++) {
+    var t = list[i];
+    var x = (t.clientX - rect.left) / rect.width * W;
+    var y = (t.clientY - rect.top) / rect.height * H;
+    if (x > 138 && y < HUD_H) { setMuted(!muted); continue; }   // mute icon
+    touches[t.identifier === undefined ? "m" : t.identifier] = x < W / 2 ? -1 : 1;
+    pressed = true;
+  }
+  if (pressed) press();
+}
+function tUp(e) {
+  e.preventDefault();
+  var list = e.changedTouches || [e];
+  for (var i = 0; i < list.length; i++)
+    delete touches[list[i].identifier === undefined ? "m" : list[i].identifier];
+}
+cvs.addEventListener("touchstart", tDown, { passive: false });
+cvs.addEventListener("touchend", tUp, { passive: false });
+cvs.addEventListener("touchcancel", tUp, { passive: false });
+cvs.addEventListener("mousedown", tDown);
+addEventListener("mouseup", tUp);
+
+function press() {
+  audio();
+  if (state === STATE_TITLE) { reset(); state = STATE_PLAY; sndStart(); engineStart(); }
+  else if (state === STATE_OVER && crashT <= 0) { reset(); state = STATE_PLAY; sndStart(); engineStart(); }
+}
+
+function readSteer() {
+  steer = 0;
+  if (keys["ArrowLeft"] || keys["a"] || keys["A"]) steer -= 1;
+  if (keys["ArrowRight"] || keys["d"] || keys["D"]) steer += 1;
+  for (var k in touches) steer += touches[k];
+  steer = Math.max(-1, Math.min(1, steer));
+}
+
+/* ================= UPDATE ================= */
+function maxSpeed() { return Math.min(150 + dist / 14, 330); }
+
+function spawnEnemy() {
+  var lane = Math.floor(Math.random() * 4);
+  // keep lane entrance clear
+  for (var i = 0; i < enemies.length; i++)
+    if (enemies[i].lane === lane && enemies[i].y < 60) return;
+  var truck = Math.random() < 0.18;
+  enemies.push({
+    lane: lane,
+    x: LANES[lane] - 6,
+    y: HUD_H - 30,
+    w: 12, h: truck ? 26 : 18,
+    spd: truck ? 35 + Math.random() * 20 : 55 + Math.random() * 45,
+    spr: truck ? sprTruck : sprEnemies[Math.floor(Math.random() * sprEnemies.length)],
+    swerve: !truck && dist > 800 && Math.random() < 0.3,
+    swerved: false
+  });
+}
+
+function update(dt) {
+  blinkT += dt;
+
+  if (state === STATE_PLAY) {
+    readSteer();
+    // speed ramps automatically; brake with down arrow
+    var target = (keys["ArrowDown"] || keys["s"] || keys["S"]) ? maxSpeed() * 0.45 : maxSpeed();
+    speed += (target - speed) * Math.min(1, dt * 0.9);
+    dist += speed * dt / 12;          // distance in meters-ish
+    roadScroll = (roadScroll + speed * dt) % 96;  // road markings scroll at true pixel speed
+
+    // steering
+    player.x += steer * 95 * dt;
+    if (player.x < ROAD_L + 1) player.x = ROAD_L + 1;
+    if (player.x + player.w > ROAD_R - 1) player.x = ROAD_R - 1 - player.w;
+
+    engineUpdate(speed);
+
+    // fuel
+    fuel -= dt * 3.6;
+    if (fuel <= 0) { fuel = 0; crash(); }
+
+    // spawn enemies
+    spawnT -= dt;
+    if (spawnT <= 0) {
+      spawnEnemy();
+      var iv = Math.max(0.45, 1.15 - dist / 2500);
+      spawnT = iv * (0.7 + Math.random() * 0.6);
+    }
+    // spawn fuel cans
+    fuelT -= dt;
+    if (fuelT <= 0) {
+      var lane = Math.floor(Math.random() * 4);
+      fuels.push({ x: LANES[lane] - 5, y: HUD_H - 14, w: 10, h: 12 });
+      fuelT = 6 + Math.random() * 5;
+    }
+
+    // enemies
+    for (var i = enemies.length - 1; i >= 0; i--) {
+      var e = enemies[i];
+      e.y += (speed - e.spd) * dt;
+      // occasional swerve toward player's lane (Road Fighter style)
+      if (e.swerve && !e.swerved && e.y > PLAYER_Y - 90 && e.y < PLAYER_Y - 60) {
+        var pl = nearestLane(player.x + 6);
+        if (Math.abs(pl - e.lane) === 1) { e.lane = pl; e.swerved = true; }
+      }
+      var tx = LANES[e.lane] - 6;
+      if (e.x !== tx) e.x += Math.sign(tx - e.x) * Math.min(Math.abs(tx - e.x), 60 * dt);
+      if (e.y > H + 30) enemies.splice(i, 1);
+      else if (hit(player.x, PLAYER_Y, player.w, player.h, e.x, e.y, e.w, e.h)) crash();
+    }
+    // fuel pickups
+    for (var j = fuels.length - 1; j >= 0; j--) {
+      var f = fuels[j];
+      f.y += speed * dt;
+      if (f.y > H + 20) fuels.splice(j, 1);
+      else if (hit(player.x, PLAYER_Y, player.w, player.h, f.x, f.y, f.w, f.h)) {
+        fuels.splice(j, 1);
+        fuel = Math.min(100, fuel + 35);
+        sndPickup();
+      }
+    }
+    // bushes scroll
+    for (var b = bushes.length - 1; b >= 0; b--) {
+      bushes[b].y += speed * dt;
+      if (bushes[b].y > H + 8) {
+        bushes[b].y = HUD_H - 10;
+        bushes[b].x = (Math.random() < 0.5 ? 3 : 141) + Math.floor(Math.random() * 14);
+      }
+    }
+  }
+  else if (state === STATE_CRASH) {
+    crashT -= dt; shakeT -= dt;
+    if (crashT <= 0) {
+      state = STATE_OVER;
+      crashT = 0.5;                  // brief input lockout
+      if (Math.floor(dist) > hiScore) { hiScore = Math.floor(dist); newHi = true; }
+    }
+  }
+  else if (state === STATE_OVER) {
+    if (crashT > 0) crashT -= dt;
+  }
+}
+function nearestLane(x) {
+  var best = 0, bd = 999;
+  for (var i = 0; i < 4; i++) { var d = Math.abs(LANES[i] - x); if (d < bd) { bd = d; best = i; } }
+  return best;
+}
+function hit(ax, ay, aw, ah, bx, by, bw, bh) {
+  return ax + 2 < bx + bw - 2 && ax + aw - 2 > bx + 2 &&
+         ay + 2 < by + bh - 2 && ay + ah - 2 > by + 2;
+}
+function crash() {
+  if (state !== STATE_PLAY) return;
+  state = STATE_CRASH; crashT = 1.0; shakeT = 0.5;
+  engineStop();
+  sndCrash();
+}
+
+/* ================= DRAW ================= */
+function draw() {
+  var shake = shakeT > 0 ? Math.floor(Math.random() * 4) - 2 : 0;
+  ctx.save();
+  ctx.translate(shake, 0);
+
+  // grass
+  ctx.fillStyle = "#00a800";
+  ctx.fillRect(0, 0, W, H);
+  var off = Math.floor(roadScroll) % 32;
+  ctx.fillStyle = "#008000";
+  for (var y = -32 + off; y < H; y += 32) {
+    ctx.fillRect(0, y, ROAD_L - 4, 5);
+    ctx.fillRect(ROAD_R + 4, y, W - ROAD_R - 4, 5);
+  }
+  // bushes
+  for (var b = 0; b < bushes.length; b++)
+    ctx.drawImage(sprBush, Math.floor(bushes[b].x), Math.floor(bushes[b].y));
+
+  // road
+  ctx.fillStyle = "#3c3c3c";
+  ctx.fillRect(ROAD_L, 0, ROAD_R - ROAD_L, H);
+  // curbs (red/white)
+  var coff = Math.floor(roadScroll) % 16;
+  for (var cy = -16 + coff; cy < H; cy += 8) {
+    ctx.fillStyle = (Math.floor((cy - coff) / 8) % 2 === 0) ? "#d82800" : "#fcfcfc";
+    ctx.fillRect(ROAD_L - 4, cy, 4, 8);
+    ctx.fillRect(ROAD_R, cy, 4, 8);
+  }
+  // lane dashes
+  ctx.fillStyle = "#fcfcfc";
+  var doff = Math.floor(roadScroll) % 24;
+  for (var lx = 1; lx < 4; lx++)
+    for (var dy = -24 + doff; dy < H; dy += 24)
+      ctx.fillRect(ROAD_L + lx * 28 - 1, dy, 2, 10);
+
+  // fuel cans
+  for (var j = 0; j < fuels.length; j++)
+    ctx.drawImage(sprFuel, Math.floor(fuels[j].x), Math.floor(fuels[j].y));
+  // enemies
+  for (var i = 0; i < enemies.length; i++)
+    ctx.drawImage(enemies[i].spr, Math.floor(enemies[i].x), Math.floor(enemies[i].y));
+
+  // player or explosion
+  if (state === STATE_CRASH) {
+    var fIdx = Math.min(2, Math.floor((1.0 - crashT) * 4));
+    ctx.drawImage(sprBoom[fIdx], Math.floor(player.x) + 1, PLAYER_Y + 5);
+  } else if (state !== STATE_TITLE) {
+    ctx.drawImage(sprPlayer, Math.floor(player.x), PLAYER_Y);
+  }
+
+  ctx.restore();
+
+  // HUD
+  ctx.fillStyle = "#0e0e0e";
+  ctx.fillRect(0, 0, W, HUD_H);
+  ctx.fillStyle = "#fcfcfc"; ctx.fillRect(0, HUD_H - 1, W, 1);
+  if (state !== STATE_TITLE) {
+    drawText("SCORE", 4, 3, "#bcbcbc");
+    drawText(pad(Math.floor(dist), 6), 4, 11, "#fcfcfc");
+    drawText("HI", 62, 3, "#bcbcbc");
+    drawText(pad(hiScore, 6), 54, 11, "#f8b800");
+    drawText("FUEL", 104, 3, "#bcbcbc");
+    // fuel bar
+    ctx.fillStyle = "#7c7c7c"; ctx.fillRect(104, 11, 52, 6);
+    ctx.fillStyle = fuel > 30 ? "#00a800" : (blinkT % 0.5 < 0.25 ? "#d82800" : "#f8b800");
+    ctx.fillRect(105, 12, Math.floor(50 * fuel / 100), 4);
+  }
+
+  // mute icon (tap to toggle)
+  ctx.fillStyle = "#bcbcbc";
+  ctx.fillRect(142, 4, 2, 4);
+  ctx.fillRect(144, 3, 2, 6);
+  ctx.fillRect(146, 2, 1, 8);
+  if (!muted) {
+    ctx.fillRect(149, 4, 1, 4);
+    ctx.fillRect(151, 3, 1, 6);
+  } else {
+    ctx.fillStyle = "#d82800";
+    ctx.fillRect(149, 3, 1, 1); ctx.fillRect(150, 4, 1, 1); ctx.fillRect(151, 5, 1, 1);
+    ctx.fillRect(151, 3, 1, 1); ctx.fillRect(149, 5, 1, 1);
+  }
+
+  // overlays
+  if (state === STATE_TITLE) {
+    ctx.fillStyle = "rgba(0,0,20,0.55)";
+    ctx.fillRect(0, HUD_H, W, H - HUD_H);
+    drawTextC("ROAD", 48, "#f8b800", 4);
+    drawTextC("RUSH", 76, "#d82800", 4);
+    ctx.drawImage(sprPlayer, Math.floor(W / 2) - 6, 108);
+    drawTextC("DODGE TRAFFIC", 136, "#fcfcfc");
+    drawTextC("GRAB FUEL CANS", 145, "#fcfcfc");
+    drawTextC("HOLD LEFT - RIGHT SIDE", 158, "#bcbcbc");
+    drawTextC("OR ARROW KEYS", 167, "#bcbcbc");
+    drawTextC("M OR ICON : MUTE", 176, "#7c7c7c");
+    if (blinkT % 0.9 < 0.55) drawTextC("TAP TO START", 192, "#00e800", 2);
+    if (hiScore > 0) drawTextC("BEST: " + hiScore, 216, "#f8b800");
+    drawTextC("MADE BY ANUROOP GAMBHIR", 226, "#a8d8f8");
+    drawTextC("BUILT WITH CLAUDE AI", 233, "#7c7c7c");
+  }
+  else if (state === STATE_OVER) {
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(0, HUD_H, W, H - HUD_H);
+    drawTextC(fuel <= 0 ? "OUT OF FUEL" : "GAME OVER", 80, "#d82800", 2);
+    drawTextC("SCORE: " + Math.floor(dist), 110, "#fcfcfc");
+    if (newHi && blinkT % 0.6 < 0.35) drawTextC("NEW RECORD!", 124, "#f8b800");
+    if (crashT <= 0 && blinkT % 0.9 < 0.55) drawTextC("TAP TO RETRY", 156, "#00e800");
+  }
+}
+function pad(n, len) {
+  var s = "" + n;
+  while (s.length < len) s = "0" + s;
+  return s;
+}
+
+/* ================= MAIN LOOP ================= */
+reset();                              // initialize state for title screen
+var last = 0;
+function loop(t) {
+  var dt = Math.min(0.05, (t - last) / 1000 || 0);
+  last = t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* ================= RESIZE ================= */
+function fit() {
+  var s = Math.min(innerWidth / W, innerHeight / H);
+  if (s > 2) s = Math.floor(s);        // integer scaling when room allows
+  cvs.style.width = (W * s) + "px";
+  cvs.style.height = (H * s) + "px";
+}
+addEventListener("resize", fit);
+fit();
+
+})();
+</script>
+</body>
+</html>
